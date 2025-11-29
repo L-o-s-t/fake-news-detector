@@ -292,4 +292,4 @@ def clear():
     return ("", 204)
 
 if __name__ == "__main__":
-    app.run(host="10.44.68.232", port=5000, debug=True)
+    app.run()
