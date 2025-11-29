@@ -1,7 +1,6 @@
 Flask
 requests
-numpy
 gunicorn
 google-generativeai
 python-dotenv
-sentence-transformers
+scikit-learn
