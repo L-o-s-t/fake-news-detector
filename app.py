@@ -3,10 +3,10 @@ import os
 import re
 import requests
 from datetime import datetime
-from sentence_transformers import SentenceTransformer, util
-import numpy as np
 from dotenv import load_dotenv
 import google.generativeai as genai
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # LOAD ENVIRONMENT VARIABLES
 load_dotenv()
@@ -25,8 +25,8 @@ NEWS_API_URL = "https://newsapi.org/v2/everything"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 # THRESHOLDS
-WIKI_SIM_THRESHOLD = 0.70
-NEWS_SIM_THRESHOLD = 0.65
+WIKI_SIM_THRESHOLD = 0.45
+NEWS_SIM_THRESHOLD = 0.40
 
 # INITIALIZATION
 app = Flask(__name__)
@@ -44,110 +44,101 @@ def clean_text(text):
 
 # NEWS VALIDATION
 def is_valid_news(text):
-    import re
+    text = text.lower().strip()
 
-    text = text.strip().lower()
+    if len(text) < 20:
+        return False, "Too short. Please enter a full sentence."
 
-    # 1️⃣ Minimum length (prevents "hi", "ok", "help", etc.)
-    if len(text) < 25:
-        return False, "Too short. Please provide a complete news-like statement."
+    casual = ["hi", "hello", "hey", "ok", "bro", "hlo", "what's up"]
+    if text in casual:
+        return False, "Casual greeting detected."
 
-    # 2️⃣ Reject casual / greeting messages
-    casual_words = [
-        "hi", "hello", "hey", "ok", "bro", "dude", "good morning",
-        "good night", "help me", "how are you", "what's up"
-    ]
-    if text in casual_words:
-        return False, "Appears to be casual conversation."
+    if re.search(r"[😀-🙏🔥❤️-🧿]", text):
+        return False, "Contains emojis — invalid news."
 
-    # 3️⃣ Reject emojis
-    if re.search(r"[😀-🙏🌀🔥❤️-🧿]", text):
-        return False, "Contains emojis — not valid news."
+    verbs = ["is", "was", "were", "reported", "said", "confirmed",
+             "died", "killed", "arrested", "launched", "announced"]
 
-    # 4️⃣ Must contain ANY meaningful verb (news-like)
-    verbs = [
-        "is", "was", "were", "has", "have", "had",
-        "announced", "reported", "stated", "said", "claims",
-        "passes", "died", "kills", "injured", "arrested",
-        "launches", "confirms", "denies"
-    ]
     if not any(v in text for v in verbs):
-        return False, "Missing action words usually present in news."
-
-    # 5️⃣ Must contain at least 2 words that look like real nouns/names
-    if len([w for w in text.split() if len(w) > 3]) < 3:
-        return False, "Not enough meaningful words."
+        return False, "No real news-like action detected."
 
     return True, "Valid news input."
+    
+# TF-IDF similarity check
+def similarity(a, b):
+    vectorizer = TfidfVectorizer()
+    tfidf = vectorizer.fit_transform([a, b])
+    sim = cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0]
+    return float(sim)
 
 # WIKIPEDIA
-def wiki_search(query):
+def wiki_verify(query):
     try:
-        params = {
-            "action": "query", "list": "search", "srsearch": query,
-            "utf8": 1, "format": "json", "srlimit": 3
-        }
-        r = requests.get(WIKI_SEARCH_URL, params=params, timeout=8)
+        r = requests.get(WIKI_SEARCH_URL, params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "format": "json",
+            "srlimit": 3
+        }, timeout=8)
+
         data = r.json()
-        results = []
-        for item in data.get("query", {}).get("search", []):
-            title = item.get("title")
-            summary_resp = requests.get(WIKI_SUMMARY_URL.format(requests.utils.requote_uri(title)), timeout=5)
-            if summary_resp.status_code == 200:
-                summary = summary_resp.json().get("extract", "")
-                if summary:
-                    results.append((title, summary))
-        return results
-    except Exception:
-        return []
+        results = data.get("query", {}).get("search", [])
 
-def wiki_verify(text):
-    results = wiki_search(text)
-    if not results:
-        return False, None, None, 0.0
-    texts = [text] + [s for (_, s) in results if s]
-    emb = embedder.encode(texts, convert_to_tensor=True)
-    cosines = util.cos_sim(emb[0], emb[1:]).cpu().numpy().flatten()
-    best_idx = int(np.argmax(cosines))
-    best_score = float(cosines[best_idx])
-    if best_score >= WIKI_SIM_THRESHOLD:
-        title, summary = results[best_idx]
-        return True, title, summary, best_score
-    return False, None, None, best_score
-
-# NEWS API
-def news_verify(query):
-    try:
-        params = {
-            "q": query,
-            "language": "en",
-            "pageSize": 10,
-            "apiKey": NEWS_API_KEY,
-        }
-        r = requests.get(NEWS_API_URL, params=params, timeout=8)
-        data = r.json()
-
-        if data.get("status") != "ok":
+        if not results:
             return False, None, 0.0
 
+        best_score = 0
+        best_title = None
+
+        for item in results:
+            title = item["title"]
+            summary_resp = requests.get(
+                WIKI_SUMMARY_URL.format(title.replace(" ", "_")), timeout=5
+            )
+            if summary_resp.status_code != 200:
+                continue
+
+            summary = summary_resp.json().get("extract", "")
+            if not summary:
+                continue
+
+            sim = similarity(query, summary)
+            if sim > best_score:
+                best_score = sim
+                best_title = title
+
+        return best_score > WIKI_SIM_THRESHOLD, best_title, best_score
+
+    except Exception:
+        return False, None, 0.0
+# NEWS API
+def news_verify(text):
+    try:
+        r = requests.get(NEWS_API_URL, params={
+            "q": text,
+            "language": "en",
+            "pageSize": 5,
+            "apiKey": NEWS_API_KEY
+        }, timeout=8)
+
+        data = r.json()
         articles = data.get("articles", [])
+
         if not articles:
             return False, None, 0.0
 
-        texts = [query] + [
-            f"{a['title']}. {a.get('description','')}" for a in articles
-        ]
-        emb = embedder.encode(texts, convert_to_tensor=True)
-        scores = util.cos_sim(emb[0], emb[1:]).cpu().numpy().flatten()
+        best_score = 0
+        best_article = None
 
-        idx = int(np.argmax(scores))
-        best_score = float(scores[idx])
-        article = articles[idx]
+        for a in articles:
+            content = f"{a['title']} {a.get('description','')}"
+            sim = similarity(text, content)
+            if sim > best_score:
+                best_score = sim
+                best_article = a
 
-        if best_score >= NEWS_SIM_THRESHOLD:
-            return True, article, best_score
-
-        return False, None, best_score
+        return best_score > NEWS_SIM_THRESHOLD, best_article, best_score
 
     except Exception:
         return False, None, 0.0
@@ -199,8 +190,6 @@ def factcheck_verify(text):
 # ROUTES
 @app.route("/")
 def home():
-    if "history" not in session:
-        session["history"] = []
     return render_template("index.html")
 
 @app.route("/predict", methods=["POST"])
@@ -223,32 +212,34 @@ def predict():
     prediction, confidence, api_match = "Uncertain", 60.0, "No strong match found"
 
     # 1. Wikipedia Verification
-    wiki_ok, wiki_title, wiki_summary, wiki_sim = wiki_verify(user_text)
-    if wiki_ok and wiki_sim > WIKI_SIM_THRESHOLD:
+    w_ok, w_title, w_sim = wiki_verify(user_text)
+    if w_ok:
         prediction = "Real"
-        confidence = wiki_sim * 100
-        api_match = f"Wikipedia - {wiki_title}"
+        confidence = w_sim * 100
+        api_match = f"Wikipedia: {w_title}"
 
     # 2. NewsAPI Verification
     elif True:
-        news_ok, article, news_sim = news_verify(user_text)
-        if news_ok and news_sim > NEWS_SIM_THRESHOLD:
-            src = article.get("source", {}).get("name", "")
-            title = article.get("title", "")
+        n_ok, article, n_sim = news_verify(user_text)
+        if n_ok:
             prediction = "Real"
-            confidence = news_sim * 100
-            api_match = f"{src}: {title}"
+            confidence = n_sim * 100
+            api_match = f"{article['source']['name']} - {article['title']}"
 
         # 3. Gemini Context Analysis
         else:
-            ai_result = gemini_context_analysis(user_text)
-            if ai_result.upper().startswith("REAL"):
-                prediction, confidence = "Real", 90.0
-            elif ai_result.upper().startswith("FAKE"):
-                prediction, confidence = "Fake", 90.0
+            gem = gemini_context_analysis(user_text)
+            api_match = gem
+
+            if gem.startswith("REAL"):
+                prediction = "Real"
+                confidence = 85
+            elif gem.startswith("FAKE"):
+                prediction = "Fake"
+                confidence = 85
             else:
-                prediction, confidence = "Uncertain", 65.0
-            api_match = ai_result
+                prediction = "Uncertain"
+                confidence = 60
 
       # 4. Google Fact Check
     fc_ok, rating, publisher = factcheck_verify(user_text)
