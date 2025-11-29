@@ -31,7 +31,6 @@ NEWS_SIM_THRESHOLD = 0.40
 # INITIALIZATION
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
-embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
 genai.configure(api_key=GEMINI_API_KEY)
 
 # CLEAN TEXT
