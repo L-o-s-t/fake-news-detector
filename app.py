@@ -147,7 +147,8 @@ def gemini_context_analysis(text):
     try:
         model = genai.GenerativeModel("models/gemini-2.5-flash")
         prompt = f"""
-You are a professional fact-checking AI.
+You are a professional, real-time fact-checking Al. Your priority is to determine the absolute CURRENT veracity of the statement.
+Search for and prioritize the **most recent** and **authoritative primary sources** (like official spokespersons, family, or global news agencies) over prior rumors or hoaxes.
 Given the statement:
 \"{text}\"
 Determine its factual accuracy based on global context, knowledge, and logic.
