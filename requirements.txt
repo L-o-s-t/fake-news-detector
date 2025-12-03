@@ -4,3 +4,4 @@ gunicorn
 google-generativeai
 python-dotenv
 scikit-learn
+spacy
