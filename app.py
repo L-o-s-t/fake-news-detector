@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, session
 import os
 import re
+import spacy
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ WIKI_SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{}"
 FACTCHECK_URL = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
 NEWS_API_URL = "https://newsapi.org/v2/everything"
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+nlp = spacy.load("en_core_web_sm")
 
 # THRESHOLDS
 WIKI_SIM_THRESHOLD = 0.25
@@ -43,25 +44,27 @@ def clean_text(text):
 
 # NEWS VALIDATION
 def is_valid_news(text):
-    text = text.lower().strip()
+    text = text.strip()
 
     if len(text) < 20:
         return False, "Too short. Please enter a full sentence."
 
-    casual = ["hi", "hello", "hey", "ok", "bro", "hlo", "what's up"]
-    if text in casual:
-        return False, "Casual greeting detected."
+    doc = nlp(text)
 
-    if re.search(r"[😀-🙏🔥❤️-🧿]", text):
-        return False, "Contains emojis — invalid news."
+    # Reject emojis
+    if any(tok.is_emoji for tok in doc):
+        return False, "Contains emojis."
 
-   # verbs = ["is", "was", "were", "reported", "said", "confirmed",
-    #         "died", "killed", "arrested", "launched", "announced"]
+    # Must contain at least one verb
+    if not any(tok.pos_ == "VERB" for tok in doc):
+        return False, "No action detected (missing verb)."
 
-   # if not any(v in text for v in verbs):
-    #    return False, "No real news-like action detected."
+    # Must mention at least one noun
+    if not any(tok.pos_ in ["NOUN", "PROPN"] for tok in doc):
+        return False, "Missing a subject or object."
 
     return True, "Valid news input."
+
     
 # TF-IDF similarity check
 def similarity(a, b):
