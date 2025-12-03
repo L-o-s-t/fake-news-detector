@@ -55,11 +55,11 @@ def is_valid_news(text):
     if re.search(r"[😀-🙏🔥❤️-🧿]", text):
         return False, "Contains emojis — invalid news."
 
-   ''' verbs = ["is", "was", "were", "reported", "said", "confirmed",
-             "died", "killed", "arrested", "launched", "announced"]
+   # verbs = ["is", "was", "were", "reported", "said", "confirmed",
+    #         "died", "killed", "arrested", "launched", "announced"]
 
-    if not any(v in text for v in verbs):
-        return False, "No real news-like action detected." '''
+   # if not any(v in text for v in verbs):
+    #    return False, "No real news-like action detected."
 
     return True, "Valid news input."
     
