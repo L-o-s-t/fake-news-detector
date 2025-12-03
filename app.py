@@ -42,6 +42,20 @@ def clean_text(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
+EMOJI_PATTERN = re.compile("[\U0001F600-\U0001F64F"  # emoticons
+                           "\U0001F300-\U0001F5FF"  # symbols & pictographs
+                           "\U0001F680-\U0001F6FF"  # transport & map
+                           "\U0001F1E0-\U0001F1FF"  # flags
+                           "\U00002700-\U000027BF"  # dingbats
+                           "\U0001F900-\U0001F9FF"  # supplemental symbols
+                           "\U00002600-\U000026FF"  # miscellaneous symbols
+                           "\U00002B00-\U00002BFF"  # arrows
+                           "\U00002000-\U000023FF]+", flags=re.UNICODE)
+
+def contains_emoji(text):
+    return bool(EMOJI_PATTERN.search(text))
+
+
 # NEWS VALIDATION
 def is_valid_news(text):
     text = text.strip()
@@ -52,7 +66,7 @@ def is_valid_news(text):
     doc = nlp(text)
 
     # Reject emojis
-    if any(tok.is_emoji for tok in doc):
+    if contains_emoji(text):
         return False, "Contains emojis."
 
     # Must contain at least one verb
